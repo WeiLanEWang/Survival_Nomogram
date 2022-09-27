@@ -57,6 +57,14 @@ df$PrimaryTumourSite<-factor(df$PrimaryTumourSite,
 
 df$Gender<-factor(df$Gender, levels = c('Female', 'Male'), labels = c(1, 2))
 
+#Fill the Censor
+
+for (i in 1:length(df$DateOfDeath)){
+  if (is.na(df$SurvivalTimeMonth[i])) {
+    df$SurvivalTimeMonth[i]<-
+      interval(df$DateofDiagnosis[i], df$DateofDiagnosis[length(df$AgeAtDiagnosis)])%/%months(1)
+  }
+}
 
 # descriptive analysis ----------------------------------------------------
 
@@ -66,44 +74,20 @@ table<-lapply(df[,2:4], table)
 lapply(table, prop.table)
 
 
-# univariable cox regression ----------------------------------------------
+# univariable  and cox regression ----------------------------------------------
 
-agecox<-coxph(Surv(SurvivalTimeMonth, Status)~AgeAtDiagnosis, data = df)
-summary(agecox)
-
-
-
-gendercox<-coxph(Surv(SurvivalTimeMonth,Status)~Gender, data = df)
-summary(gendercox)
-
-diffcox<-coxph(Surv(SurvivalTimeMonth, Status)~Differentiation, data = df)
-summary(diffcox)
-
-sitecox<-coxph(Surv(SurvivalTimeMonth, Status)~PrimaryTumourSite, data = df)
-
-
-#multivariable cox regression
 dependent_os<-'Surv(SurvivalTimeMonth, Status==1)'
 dependent_cfs<-'Surv(SurvivalTimeMonth, StatusCancer==1)'
 
 explanatory<-c('AgeAtDiagnosis', 'Gender', 'Differentiation',
                'PrimaryTumourSite')
 
-surtest<-df %>% 
-  finalfit(dependent_os, explanatory, add_dependent_label = FALSE, digits=c(3,3,4)) %>% 
-  rename("Overall survival" = label) %>% 
-  rename(" " = levels) %>% 
-  rename("  " = all)
+suros<-df %>% 
+  finalfit(dependent_os, explanatory, add_dependent_label = FALSE, digits=c(3,3,4)) 
 
-df %>%
-  hr_plot(dependent_os, explanatory, dependent_label = "Survival")
+surcfs<-df %>% 
+  finalfit(dependent_os, explanatory, add_dependent_label = FALSE, digits=c(3,3,4)) 
 
-# survival analysis -------------------------------------------------------
-
-
-coxmodel<-coxph(Surv(SurvivalTimeMonth, StatusCancer==1)~AgeAtDiagnosis+Gender+
-                  Differentiation+PrimaryTumourSite,data = df)
-summary(coxmodel)
 
 # Cox proportional hazard regression --------------------------------------
 
@@ -154,58 +138,119 @@ plot(cancernom)
 dev.off()
 
 
-# nomogram and its calibration----------------------------------------------------------------
+# Calibration of the nomogram----------------------------------------------------------------
+
+#the calibration of overall survival
+timeinc = 12
+overallcox<-cph(Surv(SurvivalTimeMonth, Status==1)~AgeAtDiagnosis+Sex+PrimaryTumourSite+Differentiation, 
+               x=T, y=T, surv=T, data = df, time.inc = timeinc)
+overallcal1<-calibrate(overallcox, cmethod="KM", method='boot', u=12, m=500, B=1000, pr=F, subtitles=F)
+
+timeinc = 36
+overallcox<-cph(Surv(SurvivalTimeMonth, Status==1)~AgeAtDiagnosis+Sex+PrimaryTumourSite+Differentiation, 
+                x=T, y=T, surv=T, data = df, time.inc = timeinc)
+overallcal3<-calibrate(overallcox, cmethod="KM", method='boot', u=36, m=500, B=1000, pr=F, subtitles=F)
+
+timeinc = 60
+overallcox<-cph(Surv(SurvivalTimeMonth, Status==1)~AgeAtDiagnosis+Sex+PrimaryTumourSite+Differentiation, 
+                x=T, y=T, surv=T, data = df, time.inc = timeinc)
+overallcal5<-calibrate(overallcox, cmethod="KM", method='boot', u=60, m=500, B=1000, pr=F, subtitles=F)
 
 timeinc = 120
-overallcox<-cph(Surv(SurvivalTimeMonth, Status==1)~AgeAtDiagnosis+Gender+PrimaryTumourSite+Differentiation, 
+overallcox<-cph(Surv(SurvivalTimeMonth, Status==1)~AgeAtDiagnosis+Sex+PrimaryTumourSite+Differentiation, 
                 x=T, y=T, surv=T, data = df, time.inc = timeinc)
+overallcal10<-calibrate(overallcox, cmethod="KM", method='boot', u=120, m=500, B=1000, pr=F, subtitles=F)
 
-overallcal1<-calibrate(overallcox, cmethod="KM", method='boot', u=timeinc, m=500, B=200, pr=F, subtitles=F)
 
-par(mar=c(10,6,5,5), cex=1.0)
+png('overall survival calibration.png', width = 16,
+    height    = 4,
+    units     = "in",
+    res       = 1200,
+    pointsize = 10)
+par(mfcol=c(1,4))
 
 plot(overallcal1, xlim = c(0, 1), ylim = c(0, 1),
-     xlab = '',
-     ylab='actual ten year overall survival')
-title(xlab = 'nomogram predicted probability', line=2)
+     xlab = 'nomogram predicted probability',
+     ylab='actual one-year overall survival', mgp=c(2,0,0), cex.lab=2)
 
+plot(overallcal3, xlim = c(0, 1), ylim = c(0, 1),
+     xlab = 'nomogram predicted probability',
+     ylab='actual three-year overall survival', mgp=c(2,0,0), cex.lab=2)
+
+plot(overallcal5, xlim = c(0, 1), ylim = c(0, 1),
+     xlab = 'nomogram predicted probability',
+     ylab='actual five-year overall survival', mgp=c(2,0,0), cex.lab=2)
+
+plot(overallcal10, xlim = c(0, 1), ylim = c(0, 1),
+     xlab = 'nomogram predicted probability',
+     ylab='actual ten-year overall survival', mgp=c(2,0,0), cex.lab=2)
+
+dev.off()
+                    
+#calibration of the cancer-free survival
+
+timeinc = 12
+cancercox<-cph(Surv(SurvivalTimeMonth, StatusCancer==1)~AgeAtDiagnosis+Sex+PrimaryTumourSite+Differentiation, 
+               x=T, y=T, surv=T, data = df, time.inc = timeinc)
+cancercal1<-calibrate(cancercox, cmethod="KM", method='boot', u=12, m=500, B=200, pr=F, subtitles=F)
+
+timeinc = 36
+cancercox<-cph(Surv(SurvivalTimeMonth, StatusCancer==1)~AgeAtDiagnosis+Sex+PrimaryTumourSite+Differentiation, 
+               x=T, y=T, surv=T, data = df, time.inc = timeinc)
+cancercal3<-calibrate(cancercox, cmethod="KM", method='boot', u=36, m=500, B=200, pr=F, subtitles=F)
+
+timeinc = 60
+cancercox<-cph(Surv(SurvivalTimeMonth, StatusCancer==1)~AgeAtDiagnosis+Sex+PrimaryTumourSite+Differentiation, 
+               x=T, y=T, surv=T, data = df, time.inc = timeinc)
+cancercal5<-calibrate(cancercox, cmethod="KM", method='boot', u=60, m=500, B=200, pr=F, subtitles=F)
 
 timeinc = 120
-cancercox<-cph(Surv(SurvivalTimeMonth, StatusCancer==1)~AgeAtDiagnosis+Gender+PrimaryTumourSite+Differentiation, 
+cancercox<-cph(Surv(SurvivalTimeMonth, StatusCancer==1)~AgeAtDiagnosis+Sex+PrimaryTumourSite+Differentiation, 
                x=T, y=T, surv=T, data = df, time.inc = timeinc)
 
+cancercal10<-calibrate(cancercox, cmethod="KM", method='boot', u=timeinc, m=500, B=200, pr=F, subtitles=F)
 
-cancercal1<-calibrate(cancercox, cmethod="KM", method='boot', u=timeinc, m=500, B=200, pr=F, subtitles=F)
-
-par(mar=c(10,6,5,5), cex=1.0)
-
+png('cancer-specific survival calibration.png', width = 16,
+    height    = 4,
+    units     = "in",
+    res       = 1200,
+    pointsize = 10)
+par(mfcol=c(1,4))
 plot(cancercal1, xlim = c(0, 1), ylim = c(0, 1),
-     xlab = '',
-     ylab='actual ten year cancer-free survival')
-title(xlab = 'nomogram predicted probability', line=2)
+     xlab = 'nomogram predicted probability',
+     ylab='actual one-year cancer-specific survival', mgp=c(2,0,0), cex.lab=2)
+
+
+plot(cancercal3, xlim = c(0, 1), ylim = c(0, 1),
+     xlab = 'nomogram predicted probability',
+     ylab='actual three-year cancer-specific survival', mgp=c(2,0,0), cex.lab=2)
+
+
+plot(cancercal5, xlim = c(0, 1), ylim = c(0, 1),
+     xlab = 'nomogram predicted probability',
+     ylab='actual five-year cancer-specific survival', mgp=c(2,0,0), cex.lab=2)
+
+plot(cancercal10, xlim = c(0, 1), ylim = c(0, 1),
+     xlab = 'nomogram predicted probability',
+     ylab='actual ten-year cancer-specific survival', mgp=c(2,0,0), cex.lab=2)
+dev.off()
+
+
 
 
 # Random survival forest --------------------------------------------------
 #fill the censors
-df2<-df
-
-for (i in 1:length(df2$DateOfDeath)){
-  if (is.na(df2$SurvivalTimeMonth[i])) {
-    df2$SurvivalTimeMonth[i]<-
-      interval(df2$DateofDiagnosis[i], df2$DateofDiagnosis[length(df2$AgeAtDiagnosis)])%/%months(1)
-  }
-}
 
 r_fit<-ranger(Surv(SurvivalTimeMonth, Status==1)~AgeAtDiagnosis+Gender+PrimaryTumourSite+Differentiation,
-              data = df2)
+              data = df)
 
 
 r_fit$prediction.error
 
 # recursive partition analysis ------------------------------------------
-df2<-df2[which(df2$SurvivalTimeMonth!=0),]
+df<-df[which(df$SurvivalTimeMonth!=0),]
 overallrpa <-rpart(Surv(SurvivalTimeMonth, Status)~AgeAtDiagnosis+Gender+PrimaryTumourSite+Differentiation,
-                   data = df2,x=T,y=T)
+                   data = df,x=T,y=T)
 summary(overallrpa)
 overallrpa
 
